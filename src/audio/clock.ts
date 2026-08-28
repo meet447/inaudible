@@ -62,9 +62,14 @@ export class BitSlicer {
     }
 
     this.votes.push(decision);
-    while (now >= this.nextSampleAt) {
+    if (now >= this.nextSampleAt) {
       this.emitCurrent(emitted);
       this.nextSampleAt += BIT_DURATION_MS;
+      if (now >= this.nextSampleAt) {
+        this.nextSampleAt +=
+          BIT_DURATION_MS *
+          Math.max(1, Math.ceil((now - this.nextSampleAt) / BIT_DURATION_MS));
+      }
     }
     return emitted;
   }
