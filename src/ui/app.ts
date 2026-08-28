@@ -183,7 +183,7 @@ export function mountApp(root: HTMLElement): void {
   hero.append(
     el("p", "eyebrow", "Web Audio proof of concept"),
     el("h1", undefined, "Inaudible FSK link"),
-    el("p", "lede", "Send and receive short messages with OscillatorNode FSK and AnalyserNode FFT. The receiver locks to 0/1 transitions and samples mid-symbol. Ultrasonic needs two devices; audible band works for same-page listen+transmit."),
+    el("p", "lede", "Send and receive short messages with OscillatorNode FSK and a Goertzel detector. The receiver locks to 0/1 transitions and samples mid-symbol. Same-page listen+transmit uses a local audio tap. Two-phone ultrasonic needs volume, a few centimeters, and speakers that can actually produce 17.5 kHz."),
   );
 
   const sendPanel = el("section", "panel");
@@ -209,7 +209,7 @@ export function mountApp(root: HTMLElement): void {
   receiveRow.append(listenButton, clearButton, selfTestButton);
   receivePanel.append(
     el("h2", undefined, "Receiver"),
-    el("p", "hint", "Self-test runs the DSP pipeline only (no microphone). Transmit while this page is listening uses a local audio tap. Between two phones, start listening on one, transmit on the other, turn media volume up, and keep them a few centimeters apart. Ultrasonic needs two devices — phone speakers often roll off above 17 kHz."),
+    el("p", "hint", "Self-test runs the DSP pipeline only (no microphone). Transmit while this page is listening uses a local audio tap on either band. Between two phones, start listening on one, transmit on the other, turn media volume up, and keep them a few centimeters apart. Phone speakers often roll off above 17 kHz, so two-device ultrasonic is the hard path."),
     receiveRow,
     spectrum,
     spectrumMeta,
