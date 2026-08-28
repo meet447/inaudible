@@ -6,15 +6,19 @@ export function binForFrequency(frequency: number, sampleRate: number, fftSize: 
 }
 
 export function bandEnergy(db: Float32Array, centerBin: number, neighbors: number): number {
-  let sum = 0;
+  let powerSum = 0;
   let count = 0;
   for (let i = centerBin - neighbors; i <= centerBin + neighbors; i += 1) {
     if (i >= 0 && i < db.length) {
-      sum += db[i];
-      count += 1;
+      const value = db[i];
+      if (Number.isFinite(value)) {
+        powerSum += 10 ** (value / 10);
+        count += 1;
+      }
     }
   }
-  return count === 0 ? MIN_TONE_DB : sum / count;
+  if (count === 0) return MIN_TONE_DB;
+  return 10 * Math.log10(powerSum / count);
 }
 
 export function decideBit(energy0: number, energy1: number): Bit | null {

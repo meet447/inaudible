@@ -7,8 +7,9 @@ import {
   frequenciesFor,
   type Band,
 } from "./constants";
-import { bandEnergy, binForFrequency, decideBit } from "./classify";
+import { bandEnergy, binForFrequency } from "./classify";
 import { BitSlicer } from "./clock";
+import { classifyWindow } from "./dsp";
 import { decodeFramedBits, findSyncIndex, type Bit, type DecodeResult } from "./protocol";
 
 export interface SpectrumSample {
@@ -28,9 +29,10 @@ export interface ReceiverHandlers {
 }
 
 interface ActiveSession {
-  stream: MediaStream;
-  source: MediaStreamAudioSourceNode;
+  stream: MediaStream | null;
+  source: MediaStreamAudioSourceNode | null;
   analyser: AnalyserNode;
+  sink: GainNode;
   raf: number;
   slicer: BitSlicer;
 }
@@ -42,14 +44,39 @@ function microphoneConstraints(): MediaTrackConstraints {
     autoGainControl: false,
     channelCount: 1,
     sampleRate: TARGET_SAMPLE_RATE,
+    ...({ voiceIsolation: false } as MediaTrackConstraints),
   };
+}
+
+async function requestMicrophone(): Promise<MediaStream | null> {
+  if (!navigator.mediaDevices?.getUserMedia) return null;
+  try {
+    return await navigator.mediaDevices.getUserMedia({ audio: microphoneConstraints() });
+  } catch {
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          ...({ voiceIsolation: false } as MediaTrackConstraints),
+        },
+      });
+    } catch {
+      return null;
+    }
+  }
 }
 
 export class FskReceiver {
   private session: ActiveSession | null = null;
   private band: Band = "ultrasonic";
+  readonly tap: GainNode;
 
-  constructor(private readonly context: AudioContext, private readonly handlers: ReceiverHandlers) {}
+  constructor(private readonly context: AudioContext, private readonly handlers: ReceiverHandlers) {
+    this.tap = context.createGain();
+    this.tap.gain.value = 0.9;
+  }
 
   get listening(): boolean {
     return this.session !== null;
@@ -63,43 +90,41 @@ export class FskReceiver {
 
   async start(): Promise<void> {
     if (this.session) return;
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error("Microphone API is not available in this browser");
-    }
     if (this.context.state === "suspended") {
       await this.context.resume();
     }
 
-    let stream: MediaStream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: microphoneConstraints() });
-    } catch {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
-      });
-    }
-
-    const source = this.context.createMediaStreamSource(stream);
+    const stream = await requestMicrophone();
     const analyser = this.context.createAnalyser();
     analyser.fftSize = FFT_SIZE;
     analyser.smoothingTimeConstant = ANALYSER_SMOOTHING;
     analyser.minDecibels = -100;
     analyser.maxDecibels = -20;
-    source.connect(analyser);
+
+    const source = stream ? this.context.createMediaStreamSource(stream) : null;
+    source?.connect(analyser);
+
+    const sink = this.context.createGain();
+    sink.gain.value = 0;
+    analyser.connect(sink);
+    sink.connect(this.context.destination);
+
+    this.tap.connect(analyser);
 
     const session: ActiveSession = {
       stream,
       source,
       analyser,
+      sink,
       raf: 0,
       slicer: new BitSlicer(),
     };
     this.session = session;
-    this.handlers.onStatus?.("Listening for FSK tones");
+    this.handlers.onStatus?.(
+      stream
+        ? "Listening for FSK tones"
+        : "Listening on local tap only (microphone unavailable)",
+    );
 
     const loop = (): void => {
       if (this.session !== session) return;
@@ -113,10 +138,12 @@ export class FskReceiver {
     const session = this.session;
     if (!session) return;
     cancelAnimationFrame(session.raf);
-    session.source.disconnect();
-    session.stream.getTracks().forEach((track) => track.stop());
+    this.tap.disconnect();
+    session.source?.disconnect();
+    session.sink.disconnect();
+    session.stream?.getTracks().forEach((track) => track.stop());
     this.session = null;
-    this.handlers.onStatus?.("Microphone closed");
+    this.handlers.onStatus?.(session.stream ? "Microphone closed" : "Listener closed");
   }
 
   resetBits(): void {
@@ -134,13 +161,16 @@ export class FskReceiver {
     const bin1 = binForFrequency(freq1, this.context.sampleRate, session.analyser.fftSize);
     const energy0 = bandEnergy(bins, bin0, PEAK_NEIGHBOR_BINS);
     const energy1 = bandEnergy(bins, bin1, PEAK_NEIGHBOR_BINS);
-    const decision = decideBit(energy0, energy1);
+
+    const timeData = new Float32Array(session.analyser.fftSize);
+    session.analyser.getFloatTimeDomainData(timeData);
+    const decision = classifyWindow(timeData, freq0, freq1, this.context.sampleRate);
 
     this.handlers.onSpectrum?.({ freq0, freq1, energy0, energy1, decision });
 
     const before = session.slicer.bits.length;
     const lockedBefore = session.slicer.locked;
-    session.slicer.push(performance.now(), decision);
+    session.slicer.push(this.context.currentTime * 1000, decision);
     if (session.slicer.bits.length !== before) {
       this.handlers.onBits?.([...session.slicer.bits]);
       this.tryDecode(session);

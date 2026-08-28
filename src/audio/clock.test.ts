@@ -33,6 +33,23 @@ describe("BitSlicer clock recovery", () => {
     }
   });
 
+  it("long rAF gap emits at most one extra bit", () => {
+    const slicer = new BitSlicer();
+    const bit: Bit = 1;
+
+    slicer.push(0, bit);
+    expect(slicer.bits).toEqual([]);
+
+    const firstMidSymbol = BIT_DURATION_MS * 0.5 + 0.001;
+    slicer.push(firstMidSymbol, bit);
+    expect(slicer.bits).toEqual([bit]);
+
+    const afterGap = BIT_DURATION_MS * 0.5 + 350;
+    const emitted = slicer.push(afterGap, bit);
+    expect(emitted).toEqual([bit]);
+    expect(slicer.bits).toEqual([bit, bit]);
+  });
+
   it("the old 0.85-interval sampler drifts and fails to decode", () => {
     const framed = encodeMessage("hello fsk");
     const naive = sampleFixedInterval(decisionsFromBits(framed, { smearMs: 0, detectDelayMs: 8 }));
