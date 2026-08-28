@@ -122,7 +122,7 @@ export function mountApp(root: HTMLElement): void {
     try {
       const bits = encodeMessage(textarea.value);
       setStatus(`Transmitting ${bits.length} bits on ${BANDS[band].label}`);
-      await transmitBits(bits, band, audioContext);
+      await transmitBits(bits, band, audioContext, receiver.listening ? receiver.tap : undefined);
       setStatus("Transmission complete");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Transmit failed", true);
@@ -183,7 +183,7 @@ export function mountApp(root: HTMLElement): void {
   hero.append(
     el("p", "eyebrow", "Web Audio proof of concept"),
     el("h1", undefined, "Inaudible FSK link"),
-    el("p", "lede", "Send and receive short messages with OscillatorNode FSK and AnalyserNode FFT. The receiver locks to 0/1 transitions and samples mid-symbol. Use ultrasonic tones on two devices, or the audible band for a single-device demo."),
+    el("p", "lede", "Send and receive short messages with OscillatorNode FSK and AnalyserNode FFT. The receiver locks to 0/1 transitions and samples mid-symbol. Ultrasonic needs two devices; audible band works for same-page listen+transmit."),
   );
 
   const sendPanel = el("section", "panel");
@@ -209,7 +209,7 @@ export function mountApp(root: HTMLElement): void {
   receiveRow.append(listenButton, clearButton, selfTestButton);
   receivePanel.append(
     el("h2", undefined, "Receiver"),
-    el("p", "hint", "Allow microphone access on the receiver first, then transmit from the other device on the same band. Turn media volume up; keep phones a few centimeters apart."),
+    el("p", "hint", "Self-test runs the DSP pipeline only (no microphone). Transmit while this page is listening uses a local audio tap. Between two phones, start listening on one, transmit on the other, turn media volume up, and keep them a few centimeters apart. Ultrasonic needs two devices — phone speakers often roll off above 17 kHz."),
     receiveRow,
     spectrum,
     spectrumMeta,

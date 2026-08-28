@@ -7,6 +7,7 @@ export async function transmitBits(
   bits: readonly Bit[],
   band: Band,
   context: AudioContext,
+  localTap?: AudioNode,
 ): Promise<void> {
   if (bits.length === 0) return;
   if (context.state === "suspended") {
@@ -22,6 +23,7 @@ export async function transmitBits(
   oscillator.type = "sine";
   oscillator.connect(gain);
   gain.connect(context.destination);
+  if (localTap) gain.connect(localTap);
 
   const startAt = context.currentTime + 0.05;
   oscillator.frequency.setValueAtTime(bits[0] === 1 ? freq1 : freq0, startAt);

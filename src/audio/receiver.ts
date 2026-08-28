@@ -7,8 +7,9 @@ import {
   frequenciesFor,
   type Band,
 } from "./constants";
-import { bandEnergy, binForFrequency, decideBit } from "./classify";
+import { bandEnergy, binForFrequency } from "./classify";
 import { BitSlicer } from "./clock";
+import { classifyWindow } from "./dsp";
 import { decodeFramedBits, findSyncIndex, type Bit, type DecodeResult } from "./protocol";
 
 export interface SpectrumSample {
@@ -31,6 +32,7 @@ interface ActiveSession {
   stream: MediaStream;
   source: MediaStreamAudioSourceNode;
   analyser: AnalyserNode;
+  sink: GainNode;
   raf: number;
   slicer: BitSlicer;
 }
@@ -42,14 +44,19 @@ function microphoneConstraints(): MediaTrackConstraints {
     autoGainControl: false,
     channelCount: 1,
     sampleRate: TARGET_SAMPLE_RATE,
+    ...({ voiceIsolation: false } as MediaTrackConstraints),
   };
 }
 
 export class FskReceiver {
   private session: ActiveSession | null = null;
   private band: Band = "ultrasonic";
+  readonly tap: GainNode;
 
-  constructor(private readonly context: AudioContext, private readonly handlers: ReceiverHandlers) {}
+  constructor(private readonly context: AudioContext, private readonly handlers: ReceiverHandlers) {
+    this.tap = context.createGain();
+    this.tap.gain.value = 0.9;
+  }
 
   get listening(): boolean {
     return this.session !== null;
@@ -91,10 +98,18 @@ export class FskReceiver {
     analyser.maxDecibels = -20;
     source.connect(analyser);
 
+    const sink = this.context.createGain();
+    sink.gain.value = 0;
+    analyser.connect(sink);
+    sink.connect(this.context.destination);
+
+    this.tap.connect(analyser);
+
     const session: ActiveSession = {
       stream,
       source,
       analyser,
+      sink,
       raf: 0,
       slicer: new BitSlicer(),
     };
@@ -113,7 +128,9 @@ export class FskReceiver {
     const session = this.session;
     if (!session) return;
     cancelAnimationFrame(session.raf);
+    this.tap.disconnect();
     session.source.disconnect();
+    session.sink.disconnect();
     session.stream.getTracks().forEach((track) => track.stop());
     this.session = null;
     this.handlers.onStatus?.("Microphone closed");
@@ -134,13 +151,16 @@ export class FskReceiver {
     const bin1 = binForFrequency(freq1, this.context.sampleRate, session.analyser.fftSize);
     const energy0 = bandEnergy(bins, bin0, PEAK_NEIGHBOR_BINS);
     const energy1 = bandEnergy(bins, bin1, PEAK_NEIGHBOR_BINS);
-    const decision = decideBit(energy0, energy1);
+
+    const timeData = new Float32Array(session.analyser.fftSize);
+    session.analyser.getFloatTimeDomainData(timeData);
+    const decision = classifyWindow(timeData, freq0, freq1, this.context.sampleRate);
 
     this.handlers.onSpectrum?.({ freq0, freq1, energy0, energy1, decision });
 
     const before = session.slicer.bits.length;
     const lockedBefore = session.slicer.locked;
-    session.slicer.push(performance.now(), decision);
+    session.slicer.push(this.context.currentTime * 1000, decision);
     if (session.slicer.bits.length !== before) {
       this.handlers.onBits?.([...session.slicer.bits]);
       this.tryDecode(session);
